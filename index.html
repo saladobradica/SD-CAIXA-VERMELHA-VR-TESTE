@@ -607,6 +607,7 @@
       tick: function (time, delta) {
         if (!this.camera) return;
         if (!this.isMobile) return;
+        if (this.el.sceneEl.is('vr-mode')) return;
 
         const dt = delta / 1000;
 
@@ -635,6 +636,61 @@
 
         this.el.object3D.translateX(this.currentMoveX * speed);
         this.el.object3D.translateZ(this.currentMoveY * speed);
+      }
+    });
+
+    // Rift S: analógicos com deslocamento progressivo e olhar contínuo.
+    // Mantém WASD, mouse e joysticks de tela originais.
+    AFRAME.registerComponent('rift-s-analogicos', {
+      schema: {
+        moveSpeed: {default: 8},
+        lookSpeed: {default: 0.5},
+        moveAcceleration: {default: 15}
+      },
+      init: function () {
+        this.left = {x: 0, y: 0};
+        this.right = {x: 0, y: 0};
+        this.currentX = 0;
+        this.currentY = 0;
+        this.direction = new THREE.Vector3();
+        this.side = new THREE.Vector3();
+        this.up = new THREE.Vector3(0, 1, 0);
+        this.camera = document.getElementById('camera');
+        document.getElementById('rift-left').addEventListener('thumbstickmoved', e => {
+          this.left.x = e.detail.x || 0;
+          this.left.y = e.detail.y || 0;
+        });
+        document.getElementById('rift-right').addEventListener('thumbstickmoved', e => {
+          this.right.x = e.detail.x || 0;
+          this.right.y = e.detail.y || 0;
+        });
+        this.el.sceneEl.addEventListener('exit-vr', () => {
+          this.left.x = this.left.y = this.right.x = this.right.y = 0;
+          this.currentX = this.currentY = 0;
+        });
+      },
+      tick: function (time, delta) {
+        if (!this.el.sceneEl.is('vr-mode') || !this.camera) return;
+        const dt = Math.min(delta / 1000, 0.05);
+        const deadzone = v => Math.abs(v) < 0.15 ? 0 : v;
+        const x = deadzone(this.left.x);
+        const y = deadzone(this.left.y);
+        // Mesma velocidade, suavização e resposta do joystick móvel original.
+        const factor = Math.min(1, this.data.moveAcceleration * dt);
+        this.currentX += (x - this.currentX) * factor;
+        this.currentY += (y - this.currentY) * factor;
+        if (Math.abs(this.currentX) < 0.01) this.currentX = 0;
+        if (Math.abs(this.currentY) < 0.01) this.currentY = 0;
+        // Direção horizontal relativa ao olhar, sem subir ou descer.
+        this.camera.object3D.getWorldDirection(this.direction);
+        this.direction.y = 0;
+        if (this.direction.lengthSq() > 0.0001) this.direction.normalize();
+        this.side.crossVectors(this.direction, this.up).normalize();
+        this.el.object3D.position.addScaledVector(this.direction, -this.currentY * this.data.moveSpeed * dt);
+        this.el.object3D.position.addScaledVector(this.side, this.currentX * this.data.moveSpeed * dt);
+        // LOOK contínuo, proporcional à inclinação do analógico, sem giro em saltos.
+        // A cabeça continua controlando a visão vertical e horizontal naturalmente.
+        this.el.object3D.rotation.y -= deadzone(this.right.x) * this.data.lookSpeed * dt;
       }
     });
   </script>
@@ -715,7 +771,7 @@
   <a-scene
     background="color: red"
     renderer="antialias: true; colorManagement: true"
-    vr-mode-ui="enabled: false"
+    vr-mode-ui="enabled: true"
     device-orientation-permission-ui="enabled: false"
     loading-screen="backgroundColor: red; dotsColor: white"
     fog="type: linear; color: red; near: 10; far: 350">
@@ -774,7 +830,11 @@
       id="rig"
       position="0 2.4 5"
       mobile-joystick-controls="moveSpeed: 8; lookSpeed: 0.5; moveAcceleration: 15"
+      rift-s-analogicos="moveSpeed: 8; lookSpeed: 0.5; moveAcceleration: 15"
       travar-na-navmesh="navmesh: #navmesh; rayHeight: 10; rayDistance: 30">
+
+      <a-entity id="rift-left" oculus-touch-controls="hand: left; model: false"></a-entity>
+      <a-entity id="rift-right" oculus-touch-controls="hand: right; model: false"></a-entity>
 
       <a-entity
         id="camera"
@@ -1216,5 +1276,21 @@
     })();
   </script>
 
+  <script>
+    // Atalho discreto: tecla 6 (linha superior do teclado).
+    // O botão nativo permanece oculto pelo CSS existente.
+    document.addEventListener('keydown', async function (event) {
+      if (event.code !== 'Digit6' || event.repeat || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.target && /^(INPUT|TEXTAREA|SELECT)$/.test(event.target.tagName)) return;
+      const cena = document.querySelector('a-scene');
+      if (!cena || !cena.hasLoaded) return;
+      try {
+        if (cena.is('vr-mode')) await cena.exitVR();
+        else await cena.enterVR();
+      } catch (erro) {
+        console.warn('Não foi possível alternar VR. Verifique WebXR, Rift S e navegador:', erro);
+      }
+    });
+  </script>
 </body>
 </html>
