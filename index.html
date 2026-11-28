@@ -785,6 +785,12 @@ AFRAME.registerComponent('vr-box-controls', {
     const k = (...names)=>names.some(n=>this.keys.has(n))?1:0;
     let x=dz(pad?.axes[0]||0)+k('ArrowRight','KeyD')-k('ArrowLeft','KeyA');
     let y=dz(pad?.axes[1]||0)+k('ArrowDown','KeyS')-k('ArrowUp','KeyW');
+    // VR Box @ + C: direcoes digitais confirmadas no aparelho.
+    const b = i => pad?.buttons[i]?.pressed ? 1 : 0;
+    const digitalX = b(12) - b(13);
+    const digitalY = b(15) - b(14);
+    if (b(12) || b(13)) x = digitalX;
+    if (b(14) || b(15)) y = digitalY;
     const length=Math.max(1,Math.hypot(x,y)); x/=length;y/=length;
     const dt=Math.min(delta/1000,0.05), f=Math.min(1,dt*this.data.acceleration);
     this.x+=(x-this.x)*f; this.y+=(y-this.y)*f;
