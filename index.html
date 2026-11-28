@@ -761,6 +761,42 @@
 .vrbox-active #mobile-controls, .vrbox-active #fullscreenBtn, .vrbox-active #voltarBtn, .vrbox-active #sobreBtn, .vrbox-active #brightness-vignette { display: none !important; }
 .vrbox-active #vrboxBtn { opacity: .55; font-size: 11px; padding: 5px 10px; }
 </style>
+<script>
+AFRAME.registerComponent('vr-box-controls', {
+  schema: {speed:{default:8}, acceleration:{default:15}, deadzone:{default:0.18}, debug:{default:true}, actionButton:{default:0}},
+  init() {
+    this.keys = new Set(); this.previous = new Set(); this.x = this.y = 0;
+    this.forward = new THREE.Vector3(); this.side = new THREE.Vector3(); this.up = new THREE.Vector3(0,1,0);
+    this.camera = document.querySelector('#camera');
+    this.enabled = () => document.body.classList.contains('vrbox-active');
+    this.down = e => {if (!this.enabled()) return; this.keys.add(e.code || e.key); this.last = e.code || e.key; if (/^(Arrow|Key[WASD]$|Space$|Enter$)/.test(e.code)) e.preventDefault(); if (!e.repeat && ['Enter','Space'].includes(e.code)) this.action();};
+    this.upKey = e => this.keys.delete(e.code || e.key);
+    this.reset = () => {this.keys.clear(); this.previous.clear(); this.x=this.y=0;};
+    window.addEventListener('keydown',this.down); window.addEventListener('keyup',this.upKey); window.addEventListener('blur',this.reset);
+    document.addEventListener('visibilitychange',this.reset);
+    this.hud = document.createElement('a-text'); this.hud.setAttribute('position','0 -0.32 -1.5'); this.hud.setAttribute('align','center'); this.hud.setAttribute('width',1.5); this.hud.setAttribute('color','#fff'); this.hud.setAttribute('visible',false); this.camera.appendChild(this.hud);
+  },
+  action() { const cursor = this.camera.querySelector('[cursor]'); const ray = cursor && cursor.components.raycaster; const target = ray && ray.intersectedEls[0]; if(target) target.emit('click',{cursorEl:cursor,intersection:ray.getIntersection(target)},false); },
+  tick(time,delta) {
+    const active=this.enabled() && !document.hidden; this.hud.setAttribute('visible',active && this.data.debug);
+    if(!active){this.reset();return;}
+    const pads = navigator.getGamepads ? Array.from(navigator.getGamepads()).filter(Boolean) : [];
+    const pad = pads[0]; const dz = v => Math.abs(v)<this.data.deadzone?0:v;
+    const k = (...names)=>names.some(n=>this.keys.has(n))?1:0;
+    let x=dz(pad?.axes[0]||0)+k('ArrowRight','KeyD')-k('ArrowLeft','KeyA');
+    let y=dz(pad?.axes[1]||0)+k('ArrowDown','KeyS')-k('ArrowUp','KeyW');
+    const length=Math.max(1,Math.hypot(x,y)); x/=length;y/=length;
+    const dt=Math.min(delta/1000,0.05), f=Math.min(1,dt*this.data.acceleration);
+    this.x+=(x-this.x)*f; this.y+=(y-this.y)*f;
+    if(Math.abs(this.x)<.001)this.x=0;if(Math.abs(this.y)<.001)this.y=0;
+    this.forward.set(0,0,-1).applyQuaternion(this.camera.object3D.getWorldQuaternion(new THREE.Quaternion())); this.forward.y=0;
+    if(this.forward.lengthSq()>1e-6){this.forward.normalize();this.side.crossVectors(this.forward,this.up).normalize();this.el.object3D.position.addScaledVector(this.forward,-this.y*this.data.speed*dt);this.el.object3D.position.addScaledVector(this.side,this.x*this.data.speed*dt);}
+    const pressed=new Set(); if(pad) pad.buttons.forEach((b,i)=>{if(b.pressed){pressed.add(i);if(i===this.data.actionButton&&!this.previous.has(i))this.action();}});this.previous=pressed;
+    if(this.data.debug && time-(this.lastHUD||0)>100){this.lastHUD=time;this.hud.setAttribute('value',`PAD: ${pad?'SIM':'NAO'} | ${pad?Array.from(pad.axes).map(v=>v.toFixed(2)).join(' '):'-'}\nB: ${[...pressed].join(',')||'-'} | TECLA: ${[...this.keys].join(',')||this.last||'-'}`);}
+  },
+  remove(){window.removeEventListener('keydown',this.down);window.removeEventListener('keyup',this.upKey);window.removeEventListener('blur',this.reset);document.removeEventListener('visibilitychange',this.reset);this.hud.remove();}
+});
+</script>
 </head>
 
 <body>
@@ -833,6 +869,7 @@
 
     <a-entity
       id="rig"
+      vr-box-controls="debug: true"
       position="0 2.4 5"
       mobile-joystick-controls="moveSpeed: 8; lookSpeed: 0.5; moveAcceleration: 15"
       rift-s-analogicos="moveSpeed: 8; lookSpeed: 0.5; moveAcceleration: 15"
@@ -848,6 +885,7 @@
         wasd-controls="acceleration: 50"
         travar-na-navmesh="navmesh: #navmesh; rayHeight: 10; rayDistance: 30"
         position="0 0 0">
+        <a-entity cursor="rayOrigin: entity; fuse: false" raycaster="objects: .interativo" position="0 0 -0.1"></a-entity>
       </a-entity>
     </a-entity>
   </a-scene>
