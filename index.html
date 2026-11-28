@@ -607,7 +607,7 @@
       tick: function (time, delta) {
         if (!this.camera) return;
         if (!this.isMobile) return;
-        if (this.el.sceneEl.is('vr-mode')) return;
+        if (this.el.sceneEl.is('vr-mode') || document.body.classList.contains('vrbox-active')) return;
 
         const dt = delta / 1000;
 
@@ -756,6 +756,11 @@
       }
     });
   </script>
+<style>
+#vrboxBtn { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); z-index: 10000; background: #222; color: white; border: 1px solid white; border-radius: 6px; padding: 10px 16px; font: 14px sans-serif; }
+.vrbox-active #mobile-controls, .vrbox-active #fullscreenBtn, .vrbox-active #voltarBtn, .vrbox-active #sobreBtn, .vrbox-active #brightness-vignette { display: none !important; }
+.vrbox-active #vrboxBtn { opacity: .55; font-size: 11px; padding: 5px 10px; }
+</style>
 </head>
 
 <body>
@@ -1292,5 +1297,98 @@
       }
     });
   </script>
+<button id="vrboxBtn" type="button">VR Box</button>
+<script>
+(function () {
+  const scene = document.querySelector('a-scene');
+  const entity = document.getElementById('camera');
+  const button = document.getElementById('vrboxBtn');
+  let active = false, renderer, originalRender, savedRotation, savedLook, savedWASD;
+  let stereo, sensor = null, lastSensor = 0, startTime = 0, enteredFullscreen = false;
+  const euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  const q = new THREE.Quaternion();
+  const correction = new THREE.Quaternion(-Math.sqrt(.5), 0, 0, Math.sqrt(.5));
+  const screenQ = new THREE.Quaternion();
+  const z = new THREE.Vector3(0, 0, 1);
+  const size = new THREE.Vector2();
+  const viewport = new THREE.Vector4(), scissor = new THREE.Vector4();
+  function orientation(e) {
+    if (e.alpha == null || e.beta == null || e.gamma == null) return;
+    sensor = e; lastSensor = performance.now();
+  }
+  function stop() {
+    if (!active) return;
+    active = false;
+    window.removeEventListener('deviceorientation', orientation);
+    renderer.render = originalRender;
+    entity.object3D.quaternion.copy(savedRotation);
+    entity.setAttribute('look-controls', 'enabled', savedLook);
+    entity.setAttribute('wasd-controls', 'enabled', savedWASD);
+    document.body.classList.remove('vrbox-active');
+    button.textContent = 'VR Box';
+    if (enteredFullscreen && document.fullscreenElement) document.exitFullscreen().catch(()=>{});
+    enteredFullscreen = false;
+  }
+  button.addEventListener('click', async function () {
+    if (active) { stop(); return; }
+    if (!scene.hasLoaded || scene.is('vr-mode')) return;
+    if (!window.DeviceOrientationEvent) { alert('Sensor de orientação indisponível.'); return; }
+    try {
+      if (typeof DeviceOrientationEvent.requestPermission === 'function' && await DeviceOrientationEvent.requestPermission() !== 'granted') return;
+    } catch(e) { alert('Permissão de sensores não concedida.'); return; }
+    renderer = scene.renderer;
+    if (!renderer || !THREE.StereoCamera) { alert('Renderização estéreo indisponível nesta versão.'); return; }
+    stereo = new THREE.StereoCamera(); stereo.eyeSep = 0.064; stereo.aspect = 0.5;
+    savedRotation = entity.object3D.quaternion.clone();
+    savedLook = entity.getAttribute('look-controls').enabled;
+    savedWASD = entity.getAttribute('wasd-controls').enabled;
+    entity.setAttribute('look-controls', 'enabled', false);
+    entity.setAttribute('wasd-controls', 'enabled', false);
+    sensor = null; startTime = performance.now();
+    window.addEventListener('deviceorientation', orientation);
+    originalRender = renderer.render;
+    active = true;
+    document.body.classList.add('vrbox-active'); button.textContent = 'Sair VR';
+    renderer.render = function(world, camera) {
+      if (!active || camera !== scene.camera || this.getRenderTarget() !== null) return originalRender.call(this, world, camera);
+      if (sensor) {
+        const angle = (screen.orientation ? screen.orientation.angle : window.orientation || 0) * Math.PI / 180;
+        const d = Math.PI / 180;
+        euler.set(sensor.beta*d, sensor.alpha*d, -sensor.gamma*d, 'YXZ');
+        q.setFromEuler(euler).multiply(correction).multiply(screenQ.setFromAxisAngle(z, -angle));
+        entity.object3D.quaternion.copy(q);
+      }
+      world.updateMatrixWorld(true); camera.updateMatrixWorld(true);
+      stereo.update(camera);
+      this.getSize(size); this.getViewport(viewport); this.getScissor(scissor);
+      const oldTest = this.getScissorTest();
+      const half = Math.floor(size.x / 2);
+      try {
+        this.setScissorTest(true);
+        this.setViewport(0, 0, half, size.y); this.setScissor(0, 0, half, size.y);
+        originalRender.call(this, world, stereo.cameraL);
+        this.setViewport(half, 0, size.x-half, size.y); this.setScissor(half, 0, size.x-half, size.y);
+        originalRender.call(this, world, stereo.cameraR);
+      } finally {
+        this.setViewport(viewport); this.setScissor(scissor); this.setScissorTest(oldTest);
+      }
+      if (!sensor && performance.now()-startTime > 3500) button.textContent = 'Sem sensor / Sair';
+      else if (sensor) button.textContent = 'Sair VR';
+    };
+    try {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen(); enteredFullscreen = true;
+      }
+      if (screen.orientation && screen.orientation.lock) await screen.orientation.lock('landscape');
+    } catch(e) { console.info('Gire o celular manualmente para a horizontal.', e); }
+  });
+  document.addEventListener('fullscreenchange', function () {
+    if (active && enteredFullscreen && !document.fullscreenElement) stop();
+  });
+  document.addEventListener('keydown', function(e) {
+    if (active && e.code === 'Digit6') e.stopImmediatePropagation();
+  }, true);
+})();
+</script>
 </body>
 </html>
