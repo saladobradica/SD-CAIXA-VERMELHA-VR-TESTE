@@ -1298,11 +1298,23 @@
     });
   </script>
 <button id="vrboxBtn" type="button">VR Box</button>
+<style>
+#vrCal {display:none;position:fixed;bottom:12px;left:50%;transform:translateX(-50%);z-index:10001;color:white;background:#222b;border-radius:6px;padding:5px;align-items:center;gap:12px;font:14px sans-serif}
+.vrbox-active #vrCal {display:flex}
+#vrCal button {font:20px sans-serif;min-width:42px;min-height:36px;touch-action:manipulation}
+</style>
+<div id="vrCal"><button id="vrMinus" type="button">−</button><span id="vrValue">31</span><button id="vrPlus" type="button">+</button></div>
 <script>
 (function () {
   const scene = document.querySelector('a-scene');
   const entity = document.getElementById('camera');
   const button = document.getElementById('vrboxBtn');
+  let offset = 31;
+  try { const v = localStorage.getItem('vrbox-offset'); if(v !== null && Number.isFinite(Number(v))) offset = Math.max(0, Math.min(40, Number(v))); } catch(e) {}
+  function adjust(n) { offset = Math.max(0, Math.min(40, offset+n)); document.getElementById('vrValue').textContent = offset; try {localStorage.setItem('vrbox-offset', String(offset));} catch(e) {} }
+  document.getElementById('vrMinus').onclick = () => adjust(-1);
+  document.getElementById('vrPlus').onclick = () => adjust(1);
+  adjust(0);
   let active = false, renderer, originalRender, savedRotation, savedLook, savedWASD;
   let stereo, sensor = null, lastSensor = 0, startTime = 0, enteredFullscreen = false;
   const euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -1363,6 +1375,10 @@
       this.getSize(size); this.getViewport(viewport); this.getScissor(scissor);
       const oldTest = this.getScissorTest();
       const half = Math.floor(size.x / 2);
+      // Shift optical centers inward while keeping each eye in its own viewport.
+      const shift = offset / 340 * size.x;
+      stereo.cameraL.projectionMatrix.elements[8] -= 2 * shift / half;
+      stereo.cameraR.projectionMatrix.elements[8] += 2 * shift / (size.x-half);
       try {
         this.setScissorTest(true);
         this.setViewport(0, 0, half, size.y); this.setScissor(0, 0, half, size.y);
@@ -1370,6 +1386,8 @@
         this.setViewport(half, 0, size.x-half, size.y); this.setScissor(half, 0, size.x-half, size.y);
         originalRender.call(this, world, stereo.cameraR);
       } finally {
+        stereo.cameraL.projectionMatrix.elements[8] += 2 * shift / half;
+        stereo.cameraR.projectionMatrix.elements[8] -= 2 * shift / (size.x-half);
         this.setViewport(viewport); this.setScissor(scissor); this.setScissorTest(oldTest);
       }
       if (!sensor && performance.now()-startTime > 3500) button.textContent = 'Sem sensor / Sair';
