@@ -765,13 +765,13 @@
 AFRAME.registerComponent('vr-box-controls', {
   schema: {speed:{default:8}, acceleration:{default:15}, deadzone:{default:0.18}, debug:{default:true}, actionButton:{default:0}},
   init() {
-    this.keys = new Set(); this.previous = new Set(); this.x = this.y = 0;
+    this.keys = new Set(); this.previous = new Set(); this.x = this.y = 0; this.until = {}; this.heading = new THREE.Vector3(0,0,-1);
     this.forward = new THREE.Vector3(); this.side = new THREE.Vector3(); this.up = new THREE.Vector3(0,1,0);
     this.camera = document.querySelector('#camera');
     this.enabled = () => document.body.classList.contains('vrbox-active');
     this.down = e => {if (!this.enabled()) return; this.keys.add(e.code || e.key); this.last = e.code || e.key; if (/^(Arrow|Key[WASD]$|Space$|Enter$)/.test(e.code)) e.preventDefault(); if (!e.repeat && ['Enter','Space'].includes(e.code)) this.action();};
     this.upKey = e => this.keys.delete(e.code || e.key);
-    this.reset = () => {this.keys.clear(); this.previous.clear(); this.x=this.y=0;};
+    this.reset = () => {this.keys.clear(); this.previous.clear(); this.until = {}; this.x=this.y=0;};
     window.addEventListener('keydown',this.down); window.addEventListener('keyup',this.upKey); window.addEventListener('blur',this.reset);
     document.addEventListener('visibilitychange',this.reset);
     this.hud = document.createElement('a-text'); this.hud.setAttribute('position','0 -0.32 -1.5'); this.hud.setAttribute('align','center'); this.hud.setAttribute('width',1.5); this.hud.setAttribute('color','#fff'); this.hud.setAttribute('visible',false); this.camera.appendChild(this.hud);
@@ -786,7 +786,9 @@ AFRAME.registerComponent('vr-box-controls', {
     let x=dz(pad?.axes[0]||0)+k('ArrowRight','KeyD')-k('ArrowLeft','KeyA');
     let y=dz(pad?.axes[1]||0)+k('ArrowDown','KeyS')-k('ArrowUp','KeyW');
     // VR Box @ + C: direcoes digitais confirmadas no aparelho.
-    const b = i => pad?.buttons[i]?.pressed ? 1 : 0;
+    const now = performance.now();
+    for (const i of [12,13,14,15]) if (pad?.buttons[i]?.pressed || pad?.buttons[i]?.value > 0.5) { this.until[i] = now + 1200; this.until[i ^ 1] = 0; }
+    const b = i => pad && (this.until[i] || 0) > now ? 1 : 0;
     const digitalX = b(12) - b(13);
     const digitalY = b(15) - b(14);
     if (b(12) || b(13)) x = digitalX;
@@ -796,9 +798,14 @@ AFRAME.registerComponent('vr-box-controls', {
     this.x+=(x-this.x)*f; this.y+=(y-this.y)*f;
     if(Math.abs(this.x)<.001)this.x=0;if(Math.abs(this.y)<.001)this.y=0;
     this.forward.set(0,0,-1).applyQuaternion(this.camera.object3D.getWorldQuaternion(new THREE.Quaternion())); this.forward.y=0;
-    if(this.forward.lengthSq()>1e-6){this.forward.normalize();this.side.crossVectors(this.forward,this.up).normalize();this.el.object3D.position.addScaledVector(this.forward,-this.y*this.data.speed*dt);this.el.object3D.position.addScaledVector(this.side,this.x*this.data.speed*dt);}
+    if(this.forward.lengthSq()>1e-6) this.heading.copy(this.forward).normalize();
+    this.forward.copy(this.heading);
+    const before = this.el.object3D.position.clone();
+    {this.forward.normalize();this.side.crossVectors(this.forward,this.up).normalize();this.el.object3D.position.addScaledVector(this.forward,-this.y*this.data.speed*dt);this.el.object3D.position.addScaledVector(this.side,this.x*this.data.speed*dt);}
+    const after = this.el.object3D.position;
+    const step = after.distanceTo(before);
     const pressed=new Set(); if(pad) pad.buttons.forEach((b,i)=>{if(b.pressed){pressed.add(i);if(i===this.data.actionButton&&!this.previous.has(i))this.action();}});this.previous=pressed;
-    if(this.data.debug && time-(this.lastHUD||0)>100){this.lastHUD=time;this.hud.setAttribute('value',`PAD: ${pad?'SIM':'NAO'} | ${pad?Array.from(pad.axes).map(v=>v.toFixed(2)).join(' '):'-'}\nB: ${[...pressed].join(',')||'-'} | TECLA: ${[...this.keys].join(',')||this.last||'-'}`);}
+    if(this.data.debug && time-(this.lastHUD||0)>100){this.lastHUD=time;this.hud.setAttribute('value',`PAD: ${pad?'SIM':'NAO'} | ${pad?Array.from(pad.axes).map(v=>v.toFixed(2)).join(' '):'-'}\nB: ${[...pressed].join(',')||'-'} | TECLA: ${[...this.keys].join(',')||this.last||'-'}\nX: ${before.x.toFixed(2)} Z: ${before.z.toFixed(2)}\nMOV: ${x.toFixed(1)},${y.toFixed(1)} PASSO: ${step.toFixed(3)}`);}
   },
   remove(){window.removeEventListener('keydown',this.down);window.removeEventListener('keyup',this.upKey);window.removeEventListener('blur',this.reset);document.removeEventListener('visibilitychange',this.reset);this.hud.remove();}
 });
